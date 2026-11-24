@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ficha Ordem Paranormal</title>
+<style>
+  :root{
+    --bg:#16131c; --panel:#1f1b28; --line:#352f44; --text:#e8e4d8; --muted:#9a94a8;
+    --pv:#c23a43; --pe:#9b6bd1; --san:#5b8bd6; --acc:#d9b45a;
+    font-family: Georgia, "Times New Roman", serif;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font-size:14px}
+  input,select,button{font:inherit;color:inherit}
+  input,select{background:#120f18;border:1px solid var(--line);border-radius:4px;padding:5px 7px;min-width:0}
+  input:focus,select:focus,button:focus-visible{outline:2px solid var(--acc);outline-offset:1px}
+  button{background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:6px 10px;cursor:pointer}
+  button:hover{border-color:var(--acc)}
+  header{display:flex;gap:6px;padding:10px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--bg);z-index:2}
+  header select{flex:1}
+  main{padding:10px 10px 30px}
+  .row{display:flex;gap:6px;margin-bottom:8px}
+  .row>*{flex:1}
+  h2{font-size:15px;margin:16px 0 6px;color:var(--acc);font-weight:normal;border-bottom:1px solid var(--line);padding-bottom:4px}
+  .attrs{display:grid;grid-template-columns:repeat(5,1fr);gap:6px}
+  .attr{background:var(--panel);border:1px solid var(--line);border-radius:6px;text-align:center;padding:6px 2px}
+  .attr b{display:block;font-size:12px;color:var(--muted);font-weight:normal}
+  .attr input{width:46px;text-align:center;font-size:20px;margin:3px 0;padding:2px}
+  .attr button{width:100%;border:0;border-top:1px solid var(--line);border-radius:0;background:none;font-size:12px;color:var(--muted);padding:4px 0 0}
+  .bars{display:grid;gap:6px}
+  .bar{display:grid;grid-template-columns:34px 1fr auto;gap:8px;align-items:center}
+  .bar label{color:var(--muted)}
+  .track{height:18px;background:#120f18;border-radius:9px;overflow:hidden;border:1px solid var(--line)}
+  .fill{height:100%;transition:width .2s}
+  .nums{display:flex;gap:3px;align-items:center}
+  .nums input{width:46px;text-align:center}
+  .nums button{padding:4px 8px}
+  .skill{display:grid;grid-template-columns:1fr 62px 52px 62px;gap:6px;align-items:center;padding:3px 0;border-bottom:1px dotted var(--line)}
+  .skill small{color:var(--muted)}
+  .skill select,.skill input{width:100%;padding:3px}
+  .skill button{padding:3px 4px;font-weight:bold}
+  .skillhead{color:var(--muted);font-size:12px}
+  textarea{width:100%;min-height:70px;background:#120f18;color:var(--text);border:1px solid var(--line);border-radius:4px;padding:6px;font:inherit;resize:vertical}
+  .empty{text-align:center;color:var(--muted);padding:40px 16px;line-height:1.5}
+  .hint{color:var(--muted);font-size:12px}
+  .log{margin-top:6px;padding:8px;background:var(--panel);border-radius:6px;border-left:3px solid var(--acc);min-height:20px}
+</style>
+</head>
+<body>
+<header>
+  <select id="sel" aria-label="Escolher ficha"></select>
+  <button id="new">Nova ficha</button>
+</header>
+<main id="main"></main>
+
+<script type="module">
+import OBR from "https://esm.sh/@owlbear-rodeo/sdk@3";
+
+const KEY = "com.ficha-op/fichas";
+const CHANNEL = "com.ficha-op/rolagem";
+const ATTRS = ["AGI","FOR","INT","PRE","VIG"];
+const SKILLS = [
+  ["Acrobacia","AGI"],["Adestramento","PRE"],["Artes","PRE"],["Atletismo","FOR"],["Atualidades","INT"],
+  ["Ciências","INT"],["Crime","AGI"],["Diplomacia","PRE"],["Enganação","PRE"],["Fortitude","VIG"],
+  ["Furtividade","AGI"],["Iniciativa","AGI"],["Intimidação","PRE"],["Intuição","PRE"],["Investigação","INT"],
+  ["Luta","FOR"],["Medicina","INT"],["Ocultismo","INT"],["Percepção","PRE"],["Pilotagem","AGI"],
+  ["Pontaria","AGI"],["Profissão","INT"],["Reflexos","AGI"],["Religião","PRE"],["Sobrevivência","INT"],
+  ["Tática","INT"],["Tecnologia","INT"],["Vontade","PRE"]
+];
+const TREINO = [["Destreinado",0],["Treinado",5],["Veterano",10],["Expert",15]];
+
+let fichas = {};      // id -> ficha
+let current = null;   // id da ficha aberta
+let myId = "", role = "PLAYER", myName = "Jogador";
+let saveTimer = null;
+
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const num = v => Number.isFinite(parseInt(v)) ? parseInt(v) : 0;
+
+function blank(){
+  return {
+    id: crypto.randomUUID(), owner: myId, nome: "Novo agente", origem: "", classe: "", nex: 5,
+    attrs: {AGI:1,FOR:1,INT:1,PRE:1,VIG:1},
+    pv:[10,10], pe:[2,2], san:[12,12], defesa:10, desloc:"9m",
+    pericias:{}, notas:""
+  };
+}
+
+/* ---------- Armazenamento (metadados da sala) ---------- */
+async function load(){
+  const meta = await OBR.room.getMetadata();
+  fichas = meta[KEY] || {};
+}
+function scheduleSave(){
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(saveNow, 400);
+}
+async function saveNow(){
+  const f = fichas[current]; if(!f) return;
+  const meta = await OBR.room.getMetadata();
+  const all = {...(meta[KEY] || {}), [f.id]: f};
+  await OBR.room.setMetadata({[KEY]: all});
+}
+async function removeFicha(id){
+  const meta = await OBR.room.getMetadata();
+  const all = {...(meta[KEY] || {})}; delete all[id];
+  await OBR.room.setMetadata({[KEY]: all});
+}
+const canEdit = f => role === "GM" || f.owner === myId;
+const visible = () => Object.values(fichas).filter(f => role === "GM" || f.owner === myId);
+
+/* ---------- Rolagens ---------- */
+const d = n => 1 + Math.floor(Math.random() * n);
+
+function rollAttr(f, label, attr, bonus){
+  const n = f.attrs[attr];
+  const qtd = n > 0 ? n : 2;
+  const dados = Array.from({length: qtd}, () => d(20));
+  const escolhido = n > 0 ? Math.max(...dados) : Math.min(...dados);
+  const total = escolhido + bonus;
+  const crit = escolhido === 20 ? " (20 natural!)" : escolhido === 1 ? " (1 natural)" : "";
+  announce(`${f.nome} — ${label}: [${dados.join(", ")}] → ${escolhido}${bonus ? " + " + bonus : ""} = ${total}${crit}`);
+}
+function rollFormula(f, txt){
+  const m = txt.replace(/\s/g,"").match(/^(\d*)d(\d+)([+-]\d+)?$/i);
+  if(!m){ show("Use o formato 2d6+3"); return; }
+  const qtd = Math.min(num(m[1]) || 1, 50), faces = num(m[2]), mod = num(m[3]);
+  const dados = Array.from({length: qtd}, () => d(faces));
+  const total = dados.reduce((a,b)=>a+b,0) + mod;
+  announce(`${f.nome} — ${txt}: [${dados.join(", ")}]${mod ? " " + (mod>0?"+":"") + mod : ""} = ${total}`);
+}
+function show(msg){ $("#log") && ($("#log").textContent = msg); OBR.notification.show(msg); }
+async function announce(msg){
+  show(msg);
+  await OBR.broadcast.sendMessage(CHANNEL, msg, {destination: "REMOTE"});
+}
+
+/* ---------- Interface ---------- */
+function renderSelect(){
+  const list = visible();
+  const sel = $("#sel");
+  sel.innerHTML = list.length
+    ? list.map(f => `<option value="${f.id}" ${f.id===current?"selected":""}>${esc(f.nome)}</option>`).join("")
+    : `<option>Nenhuma ficha</option>`;
+}
+
+function render(){
+  renderSelect();
+  const main = $("#main");
+  const f = fichas[current];
+  if(!f){
+    main.innerHTML = `<div class="empty">Você ainda não tem ficha nesta sala.<br>Toque em <b>Nova ficha</b> para criar a primeira.</div>`;
+    return;
+  }
+  const ro = canEdit(f) ? "" : "disabled";
+  const bar = (k, label, cor) => `
+    <div class="bar">
+      <label>${label}</label>
+      <div class="track"><div class="fill" style="width:${f[k][1] ? Math.max(0,Math.min(100,f[k][0]/f[k][1]*100)) : 0}%;background:${cor}"></div></div>
+      <div class="nums">
+        <button data-adj="${k}:-1" ${ro} aria-label="Diminuir ${label}">−</button>
+        <input type="number" data-cur="${k}" value="${f[k][0]}" ${ro} aria-label="${label} atual">/
+        <input type="number" data-max="${k}" value="${f[k][1]}" ${ro} aria-label="${label} máximo">
+        <button data-adj="${k}:1" ${ro} aria-label="Aumentar ${label}">+</button>
+      </div>
+    </div>`;
+
+  main.innerHTML = `
+    <div class="row"><input data-f="nome" value="${esc(f.nome)}" placeholder="Nome" ${ro}></div>
+    <div class="row">
+      <input data-f="origem" value="${esc(f.origem)}" placeholder="Origem" ${ro}>
+      <input data-f="classe" value="${esc(f.classe)}" placeholder="Classe" ${ro}>
+      <input data-f="nex" type="number" value="${f.nex}" placeholder="NEX %" ${ro}>
+    </div>
+
+    <h2>Atributos</h2>
+    <div class="attrs">
+      ${ATTRS.map(a => `
+        <div class="attr"><b>${a}</b>
+          <input type="number" min="0" max="9" data-attr="${a}" value="${f.attrs[a]}" ${ro} aria-label="${a}">
+          <button data-rollattr="${a}">rolar</button>
+        </div>`).join("")}
+    </div>
+
+    <h2>Condição</h2>
+    <div class="bars">
+      ${bar("pv","PV","var(--pv)")}
+      ${bar("pe","PE","var(--pe)")}
+      ${bar("san","SAN","var(--san)")}
+    </div>
+    <div class="row" style="margin-top:8px">
+      <label>Defesa <input type="number" data-f="defesa" value="${f.defesa}" ${ro}></label>
+      <label>Deslocamento <input data-f="desloc" value="${esc(f.desloc)}" ${ro}></label>
+    </div>
+
+    <h2>Perícias</h2>
+    <div class="skill skillhead"><span>Perícia</span><span>Treino</span><span>Outros</span><span></span></div>
+    ${SKILLS.map(([nome, attr]) => {
+      const p = f.pericias[nome] || {t:0, o:0};
+      return `<div class="skill">
+        <span>${nome} <small>${attr}</small></span>
+        <select data-treino="${nome}" ${ro}>${TREINO.map(([l,v]) => `<option value="${v}" ${p.t===v?"selected":""}>${v ? "+"+v : "—"}</option>`).join("")}</select>
+        <input type="number" data-outros="${nome}" value="${p.o}" ${ro} aria-label="Bônus extra de ${nome}">
+        <button data-rollskill="${nome}">d20</button>
+      </div>`;
+    }).join("")}
+
+    <h2>Rolagem livre</h2>
+    <div class="row">
+      <input id="formula" placeholder="2d6+3" value="1d20">
+      <button id="rollf" style="flex:0 0 80px">Rolar</button>
+    </div>
+    <div class="log" id="log">Os resultados também aparecem para os outros jogadores.</div>
+
+    <h2>Anotações</h2>
+    <textarea data-f="notas" ${ro} placeholder="Ataques, rituais, inventário...">${esc(f.notas)}</textarea>
+
+    <div class="row" style="margin-top:14px">
+      ${canEdit(f) ? `<button id="del">Excluir ficha</button>` : ""}
+    </div>
+    <p class="hint">Rolagens de perícia: rola um d20 por ponto do atributo e fica com o maior. Com atributo 0, rola dois e fica com o menor.</p>
+  `;
+}
+
+/* ---------- Eventos ---------- */
+const main = $("#main");
+
+main.addEventListener("input", e => {
+  const f = fichas[current]; if(!f || !canEdit(f)) return;
+  const t = e.target;
+  if(t.dataset.f){
+    const k = t.dataset.f;
+    f[k] = t.type === "number" ? num(t.value) : t.value;
+    if(k === "nome") renderSelect();
+  } else if(t.dataset.attr){ f.attrs[t.dataset.attr] = Math.max(0, num(t.value)); }
+  else if(t.dataset.cur){ f[t.dataset.cur][0] = num(t.value); }
+  else if(t.dataset.max){ f[t.dataset.max][1] = num(t.value); }
+  else if(t.dataset.outros){ (f.pericias[t.dataset.outros] ??= {t:0,o:0}).o = num(t.value); }
+  else return;
+  scheduleSave();
+});
+
+main.addEventListener("change", e => {
+  const f = fichas[current]; if(!f || !canEdit(f)) return;
+  const t = e.target;
+  if(t.dataset.treino){
+    (f.pericias[t.dataset.treino] ??= {t:0,o:0}).t = num(t.value);
+    scheduleSave();
+  }
+  if(t.dataset.cur || t.dataset.max) { render(); }
+});
+
+main.addEventListener("click", async e => {
+  const f = fichas[current]; if(!f) return;
+  const t = e.target.closest("button"); if(!t) return;
+  if(t.dataset.adj){
+    const [k, v] = t.dataset.adj.split(":");
+    f[k][0] = Math.max(0, Math.min(f[k][1] || 999, f[k][0] + num(v)));
+    scheduleSave(); render();
+  } else if(t.dataset.rollattr){
+    rollAttr(f, t.dataset.rollattr, t.dataset.rollattr, 0);
+  } else if(t.dataset.rollskill){
+    const nome = t.dataset.rollskill;
+    const attr = SKILLS.find(s => s[0] === nome)[1];
+    const p = f.pericias[nome] || {t:0,o:0};
+    rollAttr(f, `${nome} (${attr})`, attr, p.t + p.o);
+  } else if(t.id === "rollf"){
+    rollFormula(f, $("#formula").value);
+  } else if(t.id === "del"){
+    if(confirm(`Excluir a ficha de ${f.nome}?`)){
+      await removeFicha(f.id);
+      delete fichas[f.id];
+      current = visible()[0]?.id ?? null;
+      render();
+    }
+  }
+});
+
+$("#sel").addEventListener("change", e => { current = e.target.value; render(); });
+
+$("#new").addEventListener("click", async () => {
+  const f = blank();
+  fichas[f.id] = f; current = f.id;
+  await saveNow(); render();
+});
+
+/* ---------- Início ---------- */
+OBR.onReady(async () => {
+  myId = await OBR.player.getId();
+  role = await OBR.player.getRole();
+  myName = await OBR.player.getName();
+  await load();
+  current = visible()[0]?.id ?? null;
+  render();
+
+  // Atualiza quando alguém altera fichas (sem sobrescrever o que você está editando)
+  OBR.room.onMetadataChange(meta => {
+    const remote = meta[KEY] || {};
+    for(const [id, f] of Object.entries(remote)){
+      if(id !== current) fichas[id] = f;
+    }
+    for(const id of Object.keys(fichas)) if(!remote[id] && id !== current) delete fichas[id];
+    if(!fichas[current]) current = visible()[0]?.id ?? null;
+    renderSelect();
+  });
+
+  OBR.player.onChange(async p => { role = p.role; render(); });
+
+  // Rolagens dos outros jogadores
+  OBR.broadcast.onMessage(CHANNEL, ev => OBR.notification.show(ev.data));
+});
+</script>
+</body>
+</html>
