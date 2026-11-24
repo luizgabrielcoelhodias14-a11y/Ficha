@@ -4,8 +4,8 @@
   "manifest_version": 1,
   "action": {
     "title": "Fichas",
-    "icon": "/icon.svg",
-    "popover": "/index.html",
+    "icon": "icon.svg",
+    "popover": "index.html",
     "height": 640,
     "width": 440
   }
